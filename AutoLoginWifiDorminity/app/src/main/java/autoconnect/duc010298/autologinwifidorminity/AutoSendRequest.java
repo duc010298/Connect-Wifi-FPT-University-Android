@@ -9,11 +9,15 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.IBinder;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.HashMap;
@@ -27,7 +31,6 @@ public class AutoSendRequest extends Service {
     private String user;
     private String pass;
     private Thread t = null;
-    private boolean flag = false;
     private int totalRequest = 0;
     private String status = "Service is running";
 
@@ -98,20 +101,18 @@ public class AutoSendRequest extends Service {
     }
 
     private void startThread() {
-        flag = true;
         if(t == null) {
             t = new Thread() {
                 @Override
                 public void run() {
                     while (true) {
-                        if(flag) {
-//                            if(isRedirected()) {
+                        if(isRedirected()) {
                             sendRequest();
-//                            }
-                            try {
-                                sleep(15000);
-                            } catch (InterruptedException ex) { }
-                        } else {
+                        }
+                        try {
+                            sleep(15000);
+                        } catch (InterruptedException ex) {
+                            currentThread().interrupt();
                             break;
                         }
                     }
@@ -127,45 +128,44 @@ public class AutoSendRequest extends Service {
         if(t == null) {
             return;
         }
-        flag = false;
         t.interrupt();
         t = null;
     }
 
-//    private boolean isRedirected() {
-//        URL url = null;
-//        try {
-//            url = new URL("http://www.google.com/");
-//        } catch (MalformedURLException e) {
-//            return true;
-//        }
-//        boolean ret = false;
-//        HttpURLConnection urlConnection = null;
-//        try {
-//            urlConnection = (HttpURLConnection) url.openConnection();
-//        } catch (IOException e) {
-//            return true;
-//        }
-//        try {
-//            try {
-//                InputStream in = new BufferedInputStream(urlConnection.getInputStream());
-//            } catch (IOException e) {
-//                ret = true;
-//            }
-//            if (!url.getHost().equals(urlConnection.getURL().getHost())) {
-//                ret = true;
-//            }
-//        } finally {
-//            urlConnection.disconnect();
-//        }
-//        if(ret) {
-//            status = "Sending request, service is running";
-//        } else {
-//            status = "Don't need to send request now, service is running";
-//        }
-//        sendStatus(status, null);
-//        return ret;
-//    }
+    private boolean isRedirected() {
+        URL url = null;
+        try {
+            url = new URL("http://www.google.com/");
+        } catch (MalformedURLException e) {
+            return true;
+        }
+        boolean ret = false;
+        HttpURLConnection urlConnection = null;
+        try {
+            urlConnection = (HttpURLConnection) url.openConnection();
+        } catch (IOException e) {
+            return true;
+        }
+        try {
+            try {
+                InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+            } catch (IOException e) {
+                ret = true;
+            }
+            if (!url.getHost().equals(urlConnection.getURL().getHost())) {
+                ret = true;
+            }
+        } finally {
+            urlConnection.disconnect();
+        }
+        if(ret) {
+            status = "Sending request, service is running";
+        } else {
+            status = "Don't need to send request now, service is running";
+        }
+        sendStatus(status, null);
+        return ret;
+    }
 
     private void sendRequest() {
         HashMap<String, String> dataPost = new HashMap<>();
@@ -173,23 +173,21 @@ public class AutoSendRequest extends Service {
         dataPost.put("auth_pass", pass);
         dataPost.put("accept", "true");
 
+        HttpURLConnection conn = null;
+
         try {
             URL url = new URL(URLConnect);
 
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setReadTimeout(15000);
+            conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(15000);
             conn.setRequestMethod("POST");
-            conn.setDoInput(false);
-            conn.setDoOutput(false);
+            conn.setDoOutput(true);
 
-            OutputStream os = conn.getOutputStream();
-            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os,"UTF-8"));
-            writer.write(getPostDataString(dataPost));
+            try (OutputStream os = conn.getOutputStream(); BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"))) {
+                writer.write(getPostDataString(dataPost));
+                writer.flush();
+            }
 
-            writer.flush();
-            writer.close();
-            os.close();
             int responseCode = conn.getResponseCode();
 
             if (responseCode == HttpsURLConnection.HTTP_OK) {
@@ -200,6 +198,10 @@ public class AutoSendRequest extends Service {
             }
         } catch (Exception e) {
             status = "Cannot send request, service is running";
+        } finally {
+            if(conn != null) {
+                conn.disconnect();
+            }
         }
         sendStatus(status, "" + totalRequest);
     }
